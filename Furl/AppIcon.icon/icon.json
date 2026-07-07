@@ -1,0 +1,111 @@
+{
+  "fill" : {
+    "linear-gradient" : [
+      "display-p3:0.00000,0.17781,1.00000,1.00000",
+      "srgb:0.46889,0.00000,0.57497,1.00000"
+    ]
+  },
+  "groups" : [
+    {
+      "blend-mode" : "plus-lighter",
+      "blur-material" : 1,
+      "layers" : [
+        {
+          "blend-mode" : "overlay",
+          "fill" : {
+            "solid" : "display-p3:0.87451,0.93333,0.99608,1.00000"
+          },
+          "glass" : true,
+          "hidden" : false,
+          "image-name" : "Arm 1.svg",
+          "name" : "Arm 1",
+          "opacity" : 0.2,
+          "position" : {
+            "scale" : 2.4,
+            "translation-in-points" : [
+              0,
+              0
+            ]
+          }
+        },
+        {
+          "image-name" : "Arm 1.svg",
+          "name" : "Arm 1",
+          "position" : {
+            "scale" : 2.4,
+            "translation-in-points" : [
+              0,
+              0
+            ]
+          }
+        }
+      ],
+      "lighting" : "individual",
+      "opacity" : 1,
+      "shadow" : {
+        "kind" : "layer-color",
+        "opacity" : 1
+      },
+      "translucency" : {
+        "enabled" : true,
+        "value" : 1
+      }
+    },
+    {
+      "blend-mode-specializations" : [
+        {
+          "appearance" : "dark",
+          "value" : "normal"
+        }
+      ],
+      "blur-material-specializations" : [
+        {
+          "value" : null
+        },
+        {
+          "appearance" : "dark",
+          "value" : null
+        }
+      ],
+      "layers" : [
+        {
+          "glass" : true,
+          "image-name" : "Rectangle 1.png",
+          "name" : "Rectangle 1",
+          "position" : {
+            "scale" : 0.5,
+            "translation-in-points" : [
+              0,
+              0
+            ]
+          }
+        }
+      ],
+      "opacity-specializations" : [
+        {
+          "appearance" : "dark",
+          "value" : 0.4
+        }
+      ],
+      "shadow-specializations" : [
+        {
+          "appearance" : "dark",
+          "value" : {
+            "kind" : "neutral",
+            "opacity" : 1
+          }
+        }
+      ],
+      "translucency" : {
+        "enabled" : true,
+        "value" : 1
+      }
+    }
+  ],
+  "supported-platforms" : {
+    "circles" : [
+      "watchOS"
+    ],
+    "squares" : "shared"
+  }
+}
