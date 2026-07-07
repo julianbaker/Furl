@@ -23,7 +23,7 @@ It has:
 
 Releases are signed with a Developer ID certificate and notarized by Apple; Gatekeeper verifies both when you first open the app.
 
-The app is not sandboxed — Accessibility plus cross-process event posting are incompatible with the App Sandbox; this is true of every tool in this category. The full reviewer-facing posture, including independent verification commands, is in [`Furl-Security-Review.md`](Furl-Security-Review.md).
+The app is not sandboxed — Accessibility plus cross-process event posting are incompatible with the App Sandbox; this is true of every tool in this category. The full security posture, including independent verification commands, is in [`Furl-Security-Review.md`](Furl-Security-Review.md).
 
 ## Installing and updating
 

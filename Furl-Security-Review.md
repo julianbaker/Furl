@@ -11,16 +11,16 @@
 | Question | Answer |
 |---|---|
 | TCC permissions required | **Accessibility only.** No Screen Recording, no Input Monitoring, no Camera/Mic/Contacts/etc. |
-| Network / telemetry | **No background networking, no telemetry.** The sole network code is a user-initiated update check (About ▸ Check for Updates): one HTTPS GET to `api.github.com` for the latest release's version string, then the releases page opens in the browser. Nothing downloaded or executed, nothing automatic. No analytics, no crash SDK, **no auto-updater** (Sparkle removed). |
+| Network / telemetry | **No background networking, no telemetry.** The sole network code is a user-initiated update check (About ▸ Check for Updates): one HTTPS GET to `api.github.com` for the latest release's version string, then the releases page opens in the browser. Nothing downloaded or executed, nothing automatic. No analytics, no crash SDK, **no auto-updater**. |
 | Screen capture | **None.** No window/screen image capture of any kind. |
-| Private window-server (CGS / SkyLight) APIs | **None.** The private bridging island was removed; window geometry uses the **public** `CGWindowList` only. |
+| Private window-server (CGS / SkyLight) APIs | **None.** Window geometry uses the **public** `CGWindowList` only. |
 | Reads other apps' menu bar items | **Yes** — via the documented **Accessibility** API. |
 | Moves items | **Yes** — synthesized **Command-drag mouse events** to reposition item windows (reveal, hide, reconcile); targeted by window ID. Furl never opens or activates items — the user does. (A failed move is retried after an inert Cmd-click "wake" nudge; see §1.) |
 | Data stored about other apps | **Minimal** — the identities (bundle id + item index or AX identifier) of items the user explicitly excludes, plus any per-item auto-hide override. Nothing else. |
 | Code injection into other processes | **No.** No dylib injection, no library-validation exception. |
 | Sandboxed | **No** (required — Accessibility + cross-process event posting are incompatible with the App Sandbox). |
 
-**Bottom line for review:** Furl needs exactly one meaningful grant — **Accessibility** — which it uses to (a) read the list of menu bar items and (b) post synthetic mouse events that reposition them. It performs no screen capture, makes no network connections beyond the manual update check described above, uses no private window-server APIs, stores no third-party data beyond the items you exclude, and injects no code into other processes.
+**Summary:** Furl needs exactly one meaningful grant — **Accessibility** — which it uses to (a) read the list of menu bar items and (b) post synthetic mouse events that reposition them. It performs no screen capture, makes no network connections beyond the manual update check described above, uses no private window-server APIs, stores no third-party data beyond the items you exclude, and injects no code into other processes.
 
 ---
 
@@ -45,29 +45,29 @@
 | Permission | Required? | Why / notes |
 |---|---|---|
 | **Accessibility** (TCC) | **Yes** | Enumerate menu bar items (read-only AX) **and** post synthetic Command-drag mouse events into other apps to reposition them. This is the only TCC prompt Furl triggers. |
-| **Screen Recording** (TCC) | **No** | Not used. All screen-capture code (`ScreenCapture.swift`, image caches) was removed. Window *geometry* (position/size) via `CGWindowList` does **not** require Screen Recording. |
+| **Screen Recording** (TCC) | **No** | Not used. No screen-capture code exists in the app. Window *geometry* (position/size) via `CGWindowList` does **not** require Screen Recording. |
 | **Input Monitoring** (TCC) | **No** | No `IOHIDRequestAccess`/`CGRequestListenEventAccess`. No global keyboard monitoring anywhere. |
-| Files (user-selected, read-only) | entitlement only | Benign; inherited. |
+| Files (user-selected, read-only) | entitlement only | Benign. |
 
 ---
 
-## 3. Capability / API surface (what a reviewer will find in the binary)
+## 3. Capability / API surface (what is in the binary)
 
 **Present (and why):**
 - **Accessibility** — `AXIsProcessTrusted(WithOptions)`, `AXUIElementCreateApplication`, `AXUIElementCopyAttributeValue`, `AXUIElementSetMessagingTimeout`. Read-only enumeration only; no `AXUIElementPerformAction`.
 - **Synthetic mouse input** — `CGEvent(mouseEventSource:…)`, `event.post(tap:)` / `postToPid`, `CGEventSource`. (The Command-drag that repositions an item.) Confined to `MenuBarItemMover.swift`.
 - **CGEvent taps** — `CGEvent.tapCreate` / `tapCreateForPid`, **created and torn down per move** to sequence the drag; not a persistent system-wide tap.
-- **One private/undocumented event field** — `CGEventField(rawValue: 0x33)`, used to target a specific window by ID during the synthetic drag (matches Ice's proven technique). This is the only undocumented symbol in the reveal path.
+- **One private/undocumented event field** — `CGEventField(rawValue: 0x33)`, used to target a specific window by ID during the synthetic drag (the same technique Ice uses). This is the only undocumented symbol in the reveal path.
 - **Cursor control during a move** — `CGDisplayHideCursor` / `CGDisplayShowCursor` / `CGWarpMouseCursorPosition` / `CGAssociateMouseAndMouseCursorPosition`, so the synthetic drag isn't visible; the cursor's real position and mouse association are restored immediately afterward.
 - **Public window list** — `CGWindowListCopyWindowInfo`, `CGWindowListCreateDescriptionFromArray`, `CGWindowLevelForKey`. Geometry + menu-open detection. No image/pixel APIs.
 - **HTTPS fetch, one endpoint** — `URLSession` GET to `api.github.com/…/releases/latest`, reached only from the About pane's Check for Updates button. Confined to `UpdateChecker.swift`; no other networking exists in the app.
-- **NSEvent monitors** — **none.** The inherited auto-rehide logic and its monitor classes were removed entirely; there are no global or local NSEvent monitors of any kind.
+- **NSEvent monitors** — **none**, global or local.
 - **Objective-C method swizzling (own process only)** — `NSSplitViewItem.canCollapse` is swizzled to keep the settings window's sidebar from collapsing (`NSSplitViewItem+swizzledCanCollapse.swift`). Cosmetic, scoped to Furl's own windows; it touches no other process.
 
-**Absent (removed or never present):**
+**Does not use:**
 - ❌ Screen/window image capture (`CGWindowListCreateImage`, `SCShareableContent`).
-- ❌ Private CGS / SkyLight window-server calls (`CGSMainConnectionID`, `CGSGetProcessMenuBarWindowList`, `@_silgen_name` bridging) — the whole island was deleted.
-- ❌ Background networking of any kind (the manual update check above is the sole network call); ❌ auto-updater (Sparkle); ❌ analytics/telemetry/crash SDK.
+- ❌ Private CGS / SkyLight window-server calls (`CGSMainConnectionID`, `CGSGetProcessMenuBarWindowList`, `@_silgen_name` bridging).
+- ❌ Background networking of any kind (the manual update check above is the sole network call); ❌ auto-updater (no Sparkle or similar); ❌ analytics/telemetry/crash SDK.
 - ❌ Input Monitoring / global keyboard monitoring; ❌ clipboard access.
 - ❌ Code injection (no dylib injection; no library-validation / `get-task-allow` exception).
 - ❌ Carbon hotkeys.
@@ -90,29 +90,29 @@ All persistence is UserDefaults; the complete key inventory:
 
 | Item | Value | Note |
 |---|---|---|
-| `com.apple.security.app-sandbox` | **false** | Required: Accessibility + posting synthetic events into other processes are not sandbox-compatible. This is the headline IT item for any tool in this category. |
+| `com.apple.security.app-sandbox` | **false** | Required: Accessibility + posting synthetic events into other processes are not sandbox-compatible. This is true of every tool in this category. |
 | `ENABLE_HARDENED_RUNTIME` | YES | On. |
 | Hardened-runtime exceptions | **none** | No library-validation disable, no JIT/`get-task-allow`/injection — confirms Furl does not inject code into other apps; it works in-process + via synthetic events. |
 | `com.apple.security.files.user-selected.read-only` | true | Benign. |
 | `LSUIElement` | YES | Agent app, no Dock icon. |
 | Deployment target | macOS 14+ | — |
 
-Dependencies (SPM): **LaunchAtLogin-Modern** only. Removed from upstream: **Sparkle** (network/updates), **AXSwift** (replaced with direct AX calls), **Ifrit** (search), **CompactSlider** (replaced with a native stepper).
+Dependencies (SPM): **LaunchAtLogin-Modern** only. Upstream Ice's other dependencies — **Sparkle** (updates), **AXSwift**, **Ifrit** (search), **CompactSlider** — are not present: AX calls are made directly, and the slider is a native stepper.
 
 ---
 
-## 6. Risk assessment (for IT)
+## 6. Risk assessment
 
 **Intrinsic to the category (cannot be avoided by any tool that manages foreign menu bar items):**
 - **Not sandboxed**, and **Accessibility required**. Apple provides no public, sandbox-safe API to reposition another app's menu bar item; every tool here (Bartender, Hidden Bar, Ice, …) needs Accessibility and/or private calls.
 
-**Furl-specific posture (better than typical):**
+**Furl-specific posture:**
 - **No screen recording** — unlike many menu bar managers, Furl never captures the screen. Verifiable in the binary (no capture symbols).
-- **No private window-server APIs** — geometry is public `CGWindowList` only. The private CGS/SkyLight surface that upstream Ice links was removed.
+- **No private window-server APIs** — geometry is public `CGWindowList` only. (Upstream Ice links a private CGS/SkyLight surface; Furl does not.)
 - **No background network / no auto-update** — nothing leaves the machine on its own, and there is no remote code delivery. The sole network call is the user-clicked version check (one GET, version string in, browser link out).
 
-**Worth calling out explicitly:**
-- **Synthetic input into other processes.** The reveal/move engine posts synthetic Command-drag mouse events targeting item windows (including one undocumented event field, `0x33`, to address a window by ID). It reads no input, captures no content, opens/activates nothing, and is transient/local — but it is the most powerful capability and reviewers should know it exists. It is confined to `MenuBarItemMover.swift`. One detail a source reviewer will encounter: the move retry path posts a Cmd-down/up "wake" pair at a stuck item's center (`wakeUp`) — click-shaped events, but Cmd-click on a menu bar item is the rearrange gesture and opens nothing. Note that the reconciliation pass posts the same drag events on a timer (not only in response to a user action) to enforce the item positions the user configured; the events always target menu-bar-item windows resolved at the status-window layer.
+**The most powerful capability:**
+- **Synthetic input into other processes.** The reveal/move engine posts synthetic Command-drag mouse events targeting item windows (including one undocumented event field, `0x33`, to address a window by ID). It reads no input, captures no content, opens/activates nothing, and is transient/local. It is confined to `MenuBarItemMover.swift`. One detail visible in the source: the move retry path posts a Cmd-down/up "wake" pair at a stuck item's center (`wakeUp`) — click-shaped events, but Cmd-click on a menu bar item is the rearrange gesture and opens nothing. The reconciliation pass posts the same drag events on a timer (not only in response to a user action) to enforce the item positions the user configured; the events always target menu-bar-item windows resolved at the status-window layer.
 
 ---
 
