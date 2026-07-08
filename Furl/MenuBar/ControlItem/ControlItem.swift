@@ -72,6 +72,14 @@ final class ControlItem {
     /// drags fight over the event taps and the cursor.
     private var isRepositioning = false
 
+    /// Whether we're polling for the Accessibility grant after prompting the
+    /// user, so the item list can fill in without a relaunch.
+    private var isPollingForAccessibility = false
+
+    /// When the app launched — used to tell a cold cache (normal for the first
+    /// few seconds) from enumeration that is genuinely stuck.
+    private static let launchTime = ContinuousClock.now
+
     /// The menu bar section associated with the control item.
     private weak var section: MenuBarSection? {
         appState?.menuBarManager.sections.first { $0.controlItem === self }
@@ -335,6 +343,25 @@ final class ControlItem {
         }
     }
 
+    /// Briefly shows a warning symbol in place of the icon after a failed
+    /// reveal, so the pick isn't silently inert.
+    private func flashRevealFailure() {
+        guard let button = statusItem.button else {
+            return
+        }
+        button.image = NSImage(
+            systemSymbolName: "exclamationmark.triangle",
+            accessibilityDescription: "Furl could not reveal the item"
+        )
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(1.5))
+            guard let self else {
+                return
+            }
+            updateStatusItem(with: state)
+        }
+    }
+
     /// Performs the control item's action.
     @objc private func performAction() {
         guard
@@ -383,7 +410,37 @@ final class ControlItem {
         model.refresh()
         dropdownEntries = model.managedItems
 
+        // If the list is empty, watch for that refresh landing while the menu
+        // is open and swap the real rows in live, instead of making the user
+        // close and reopen. (Menu tracking drains the main queue, so the
+        // publisher delivers while the menu is up.)
+        var liveUpdate: AnyCancellable?
+
         if dropdownEntries.isEmpty {
+            liveUpdate = model.$items
+                .receive(on: DispatchQueue.main)
+                .sink { [weak self, weak menu] _ in
+                    guard
+                        let self,
+                        let menu,
+                        dropdownEntries.isEmpty
+                    else {
+                        return
+                    }
+                    let entries = model.managedItems
+                    guard !entries.isEmpty else {
+                        return
+                    }
+                    dropdownEntries = entries
+                    // Replace the placeholder rows above the utility section.
+                    while let first = menu.items.first, !first.isSeparatorItem {
+                        menu.removeItem(at: 0)
+                    }
+                    for (index, item) in entryMenuItems(for: entries).enumerated() {
+                        menu.insertItem(item, at: index)
+                    }
+                }
+
             if !MenuBarItemsReader.hasAccessibility {
                 let grantItem = NSMenuItem(
                     title: "Enable Accessibility for Furl…",
@@ -394,15 +451,18 @@ final class ControlItem {
                 menu.addItem(grantItem)
 
                 let hintItem = NSMenuItem(
-                    title: "Furl needs Accessibility to list menu bar items. If you just granted it, quit and reopen Furl.",
+                    title: "Furl needs Accessibility to list menu bar items.",
                     action: nil,
                     keyEquivalent: ""
                 )
                 hintItem.isEnabled = false
                 menu.addItem(hintItem)
+                menu.addItem(relaunchMenuItem())
             } else if model.items.isEmpty {
                 // Cold cache right after launch; the refresh above fills it
-                // within a second or two.
+                // within a second or two (and the live update swaps it in).
+                // Still empty long after launch means enumeration is stuck —
+                // offer the remedy.
                 let loadingItem = NSMenuItem(
                     title: "Loading items…",
                     action: nil,
@@ -410,6 +470,9 @@ final class ControlItem {
                 )
                 loadingItem.isEnabled = false
                 menu.addItem(loadingItem)
+                if ContinuousClock.now - Self.launchTime > .seconds(20) {
+                    menu.addItem(relaunchMenuItem())
+                }
             } else {
                 let allExcludedItem = NSMenuItem(
                     title: "All items are visible in the menu bar — see Furl Settings",
@@ -420,24 +483,44 @@ final class ControlItem {
                 menu.addItem(allExcludedItem)
             }
         } else {
-            for (index, entry) in dropdownEntries.enumerated() {
-                let item = NSMenuItem(
-                    title: entry.displayTitle,
-                    action: #selector(pickDropdownItem(_:)),
-                    keyEquivalent: ""
-                )
-                item.target = self
-                item.tag = index
-                if let icon = entry.appIcon, let resized = icon.copy() as? NSImage {
-                    resized.size = NSSize(width: 16, height: 16)
-                    item.image = resized
-                }
+            for item in entryMenuItems(for: dropdownEntries) {
                 menu.addItem(item)
             }
         }
 
         appendUtilityItems(to: menu)
         presentMenu(menu)
+        liveUpdate?.cancel()
+    }
+
+    /// Menu rows for the given entries; tags index into `dropdownEntries`.
+    private func entryMenuItems(for entries: [MenuBarItemEntry]) -> [NSMenuItem] {
+        entries.enumerated().map { index, entry in
+            let item = NSMenuItem(
+                title: entry.displayTitle,
+                action: #selector(pickDropdownItem(_:)),
+                keyEquivalent: ""
+            )
+            item.target = self
+            item.tag = index
+            if let icon = entry.appIcon, let resized = icon.copy() as? NSImage {
+                resized.size = NSSize(width: 16, height: 16)
+                item.image = resized
+            }
+            return item
+        }
+    }
+
+    /// A row that relaunches Furl — the remedy when the Accessibility state
+    /// looks stuck (e.g. the grant landed against a stale process record).
+    private func relaunchMenuItem() -> NSMenuItem {
+        let item = NSMenuItem(
+            title: "Relaunch Furl",
+            action: #selector(relaunchApp),
+            keyEquivalent: ""
+        )
+        item.target = self
+        return item
     }
 
     /// Appends the settings and quit items to the given menu.
@@ -507,6 +590,10 @@ final class ControlItem {
             revealedTarget = await revealItemOnScreen(entry)
         }
         guard let revealed = revealedTarget else {
+            // Every drag attempt failed — the item won't appear. Say so
+            // rather than leaving the pick silently inert.
+            NSSound.beep()
+            flashRevealFailure()
             return
         }
         // Already peeked (e.g. picked again while still on-screen) — its
@@ -668,6 +755,9 @@ final class ControlItem {
             activePeeks.isEmpty,
             !isOwnMenuOpen,
             !isRepositioning,
+            // Never start corrective moves while the user is mid-click or
+            // mid-drag — the mover freezes the cursor. The next refresh retries.
+            NSEvent.pressedMouseButtons == 0,
             let model = appState?.menuBarItemsModel,
             let iconFrame = iconCGFrame
         else {
@@ -738,12 +828,14 @@ final class ControlItem {
                 isRepositioning = false
             }
             for (entry, match) in tucks {
+                await Self.waitForNoMouseButtons()
                 Logger.controlItem.info("Tucking stray managed item \(entry.identity) off-screen")
                 await hideItem(
                     MenuBarItemMover.Target(windowID: match.windowID, pid: match.ownerPID, frame: match.frame)
                 )
             }
             for entry in placements {
+                await Self.waitForNoMouseButtons()
                 Logger.controlItem.info("Restoring excluded item \(entry.identity) right of the icon")
                 await moveItemToExcludedPosition(entry)
             }
@@ -795,7 +887,7 @@ final class ControlItem {
             defer {
                 activePeeks.remove(target.windowID)
             }
-            let idleDeadline = ContinuousClock.now.advanced(by: .seconds(duration))
+            var idleDeadline = ContinuousClock.now.advanced(by: .seconds(duration))
             // Bound the whole peek so a menu left open forever can't pin the
             // item on-screen indefinitely.
             let hardDeadline = ContinuousClock.now.advanced(by: .seconds(600))
@@ -825,6 +917,12 @@ final class ControlItem {
                 if menuOpen {
                     everOpened = true
                     dismissedAt = nil
+                } else if Self.isPointerNearItem(windowID: target.windowID, fallbackFrame: target.frame) {
+                    // The pointer is on the item — resting there or reaching
+                    // for it. Hold the hide, with a short grace period after
+                    // it leaves.
+                    dismissedAt = nil
+                    idleDeadline = max(idleDeadline, ContinuousClock.now.advanced(by: .seconds(2)))
                 } else if everOpened {
                     // Menu was open and is now closed. Hold for a beat; a
                     // re-open clears this and keeps the item out.
@@ -839,7 +937,33 @@ final class ControlItem {
                 }
                 try? await Task.sleep(for: .milliseconds(300))
             }
+            // Don't grab the item mid-click/drag — the mover freezes the
+            // cursor, which would interrupt whatever the user is doing.
+            await Self.waitForNoMouseButtons()
             await hideItem(target)
+        }
+    }
+
+    /// Whether the pointer is on (or within a few points of) the peeked item —
+    /// the user is using it or reaching for it, so it must not hide.
+    private static func isPointerNearItem(windowID: CGWindowID, fallbackFrame: CGRect) -> Bool {
+        guard let primaryScreen = NSScreen.screens.first else {
+            return false
+        }
+        let frame = MenuBarItemMover.liveFrame(for: windowID) ?? fallbackFrame
+        // NSEvent.mouseLocation is AppKit bottom-left origin; the frame is
+        // CoreGraphics top-left origin.
+        let mouse = NSEvent.mouseLocation
+        let point = CGPoint(x: mouse.x, y: primaryScreen.frame.maxY - mouse.y)
+        return frame.insetBy(dx: -6, dy: -4).contains(point)
+    }
+
+    /// Waits (bounded) until no mouse button is pressed, so a synthetic move
+    /// never freezes the cursor in the middle of a real click or drag.
+    private static func waitForNoMouseButtons(upTo limit: Duration = .seconds(30)) async {
+        let deadline = ContinuousClock.now.advanced(by: limit)
+        while NSEvent.pressedMouseButtons != 0, ContinuousClock.now < deadline {
+            try? await Task.sleep(for: .milliseconds(100))
         }
     }
 
@@ -850,9 +974,43 @@ final class ControlItem {
         return appState?.menuBarItemsModel.autoHideOverride(entry) ?? global
     }
 
-    /// Prompts the user to grant Accessibility access.
+    /// Prompts the user to grant Accessibility access, then polls for the
+    /// grant so the item list fills in as soon as it's given — no relaunch.
     @objc private func requestAccessibility() {
         MenuBarItemsReader.requestAccessibility()
+        guard !isPollingForAccessibility else {
+            return
+        }
+        isPollingForAccessibility = true
+        Task { @MainActor [weak self] in
+            defer {
+                self?.isPollingForAccessibility = false
+            }
+            let deadline = ContinuousClock.now.advanced(by: .seconds(300))
+            while ContinuousClock.now < deadline {
+                if MenuBarItemsReader.hasAccessibility {
+                    self?.appState?.menuBarItemsModel.refresh()
+                    return
+                }
+                try? await Task.sleep(for: .seconds(2))
+            }
+        }
+    }
+
+    /// Relaunches the app: spawns a detached `open` for our bundle (after a
+    /// beat, so this instance has fully exited) and terminates.
+    @objc private func relaunchApp() {
+        let path = Bundle.main.bundlePath.replacingOccurrences(of: "'", with: "'\\''")
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/sh")
+        process.arguments = ["-c", "sleep 0.5; /usr/bin/open '\(path)'"]
+        do {
+            try process.run()
+        } catch {
+            Logger.controlItem.error("Failed to spawn relauncher: \(error)")
+            return
+        }
+        NSApp.terminate(nil)
     }
 
     /// Creates a menu to show under the control item.
