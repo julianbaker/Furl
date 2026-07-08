@@ -88,7 +88,12 @@ enum MenuBarItemMover {
             throw MoverError.invalidEventSource
         }
 
-        let startPoint = CGPoint(x: 20_000, y: 20_000)
+        // Start the drag at the item's own (off-screen) location. Ice grabbed
+        // at a far corner (20_000, 20_000), but that x clamps to the right end
+        // of the menu bar, so the window server opens a make-room gap there —
+        // every on-screen item lurches left and eases back. Grabbing at the
+        // item's real position keeps any make-room off-screen.
+        let startPoint = CGPoint(x: item.frame.midX, y: item.frame.midY)
         let endPoint: CGPoint = switch edge {
         case .left: CGPoint(x: anchor.frame.minX, y: anchor.frame.midY)
         case .right: CGPoint(x: anchor.frame.maxX, y: anchor.frame.midY)
