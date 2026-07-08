@@ -37,7 +37,7 @@ or download the notarized zip from [Releases](https://github.com/julianbaker/Fur
 
 ## Troubleshooting
 
-- **The dropdown is empty or shows an Accessibility hint.** Grant Furl Accessibility in System Settings ▸ Privacy & Security ▸ Accessibility, then quit and reopen Furl. The grant is tied to the app's code signature, so replacing the binary with a differently-signed build resets it.
+- **The dropdown is empty or shows an Accessibility hint.** Grant Furl Accessibility in System Settings ▸ Privacy & Security ▸ Accessibility — the list fills in on its own a few seconds after the grant. If it stays empty, use **Relaunch Furl** in the dropdown. The grant is tied to the app's code signature, so replacing the binary with a differently-signed build resets it.
 - **Items are missing right after launch.** The item list warms up over the first few seconds; it refreshes continuously afterward.
 - **An app crashes when you open it from the menu bar.** That's the app's own bug, not Furl's — Furl only moves the item on-screen; opening it is an ordinary click. Known case: MonitorControl 4.2.0 crashes when its slider is used on modern macOS — update it (its built-in updater is broken; see [MonitorControl#1663](https://github.com/MonitorControl/MonitorControl/issues/1663)).
 
